@@ -1,5 +1,6 @@
 package org.apache.cordova.firebase;
 
+import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
@@ -12,6 +13,7 @@ import android.util.Log;
 import android.app.Notification;
 import android.text.TextUtils;
 import android.content.ContentResolver;
+import android.graphics.Color;
 
 import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
@@ -22,6 +24,17 @@ import java.util.Random;
 public class FirebasePluginMessagingService extends FirebaseMessagingService {
 
     private static final String TAG = "FirebasePlugin";
+
+  /**
+   * Get a string from resources without importing the .R package
+   * @param name Resource Name
+   * @return Resource
+   */
+    private String getStringResource(String name) {
+      return this.getString(
+        this.getResources().getIdentifier(
+          name, "string", this.getPackageName()));
+    }
 
     /**
      * Called when message is received.
@@ -46,7 +59,9 @@ public class FirebasePluginMessagingService extends FirebaseMessagingService {
         String text;
         String id;
         String sound = null;
+        String lights = null;
         Map<String, String> data = remoteMessage.getData();
+      
         if (remoteMessage.getNotification() != null) {
             title = remoteMessage.getNotification().getTitle();
             text = remoteMessage.getNotification().getBody();
@@ -56,10 +71,8 @@ public class FirebasePluginMessagingService extends FirebaseMessagingService {
             text = data.get("text");
             id = data.get("id");
             sound = data.get("sound");
-
-            if(TextUtils.isEmpty(text)){
-                text = data.get("body");
-            }
+            lights = data.get("lights"); //String containing hex ARGB color, miliseconds on, miliseconds off, example: '#FFFF00FF,1000,3000'
+            if(TextUtils.isEmpty(text)) text = data.get("body");
         }
 
         if(TextUtils.isEmpty(id)){
@@ -73,16 +86,17 @@ public class FirebasePluginMessagingService extends FirebaseMessagingService {
         Log.d(TAG, "Notification Message Title: " + title);
         Log.d(TAG, "Notification Message Body/Text: " + text);
         Log.d(TAG, "Notification Message Sound: " + sound);
+        Log.d(TAG, "Notification Message Lights: " + lights);
 
         // TODO: Add option to developer to configure if show notification when app on foreground
         if (!TextUtils.isEmpty(text) || !TextUtils.isEmpty(title) || (!data.isEmpty())) {
             boolean showNotification = (FirebasePlugin.inBackground() || !FirebasePlugin.hasNotificationsCallback()) && (!TextUtils.isEmpty(text) || !TextUtils.isEmpty(title));
-            sendNotification(id, title, text, data, showNotification, sound);
+            sendNotification(id, title, text, data, showNotification, sound, lights);
         }
 
     }
 
-    private void sendNotification(String id, String title, String messageBody, Map<String, String> data, boolean showNotification, String sound) {
+    private void sendNotification(String id, String title, String messageBody, Map<String, String> data, boolean showNotification, String sound, String lights) {
         Bundle bundle = new Bundle();
         for (String key : data.keySet()) {
             bundle.putString(key, data.get(key));
@@ -93,8 +107,10 @@ public class FirebasePluginMessagingService extends FirebaseMessagingService {
             PendingIntent pendingIntent = PendingIntent.getBroadcast(this, id.hashCode(), intent,
                 PendingIntent.FLAG_UPDATE_CURRENT);
 
+            String channelId = this.getStringResource("default_notification_channel_id");
+            String channelName = this.getStringResource("default_notification_channel_name");
             Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-            NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this)
+            NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, channelId)
                 .setContentTitle(title)
                 .setContentText(messageBody)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -120,6 +136,18 @@ public class FirebasePluginMessagingService extends FirebaseMessagingService {
                 Log.d(TAG, "Sound was null ");
             }
 
+            if(lights != null) {
+              try {
+                String[] lightsComponents = lights.replaceAll("\\s","").split(",");
+                if(lightsComponents.length == 3) {
+                  int lightArgb = Color.parseColor(lightsComponents[0]);
+                  int lightOnMs = Integer.parseInt(lightsComponents[1]);
+                  int lightOffMs = Integer.parseInt(lightsComponents[2]);
+                  notificationBuilder.setLights(lightArgb, lightOnMs, lightOffMs);
+                }
+              }catch(Exception e){}
+            }
+
             if(android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M)
             {
                 int accentID = getResources().getIdentifier("accent", "color", getPackageName());
@@ -135,6 +163,14 @@ public class FirebasePluginMessagingService extends FirebaseMessagingService {
                 }
             }
             NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+
+            // Since android Oreo notification channel is needed.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+              NotificationChannel channel = new NotificationChannel(channelId,
+                channelName,
+                NotificationManager.IMPORTANCE_DEFAULT);
+              notificationManager.createNotificationChannel(channel);
+            }
 
             notificationManager.notify(id.hashCode(), notification);
         } else {
